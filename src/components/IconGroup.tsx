@@ -34,7 +34,7 @@ const IconGroup: React.FC<IconGroupProps> = ({ layout, icons, onContextMenu, sty
 
   return (
     <div
-      className={`glass-panel flex items-center justify-center group-animation ${getLayoutClasses()}`}
+      className={`flex items-center justify-center group-animation backdrop-blur-md border border-white/10 ${getLayoutClasses()}`}
       style={style}
     >
       {icons.map((icon, index) => {

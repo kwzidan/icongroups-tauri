@@ -54,25 +54,29 @@ function App() {
     }
   }, []);
 
-  // Tauri Native Drag & Drop listener
+  // Tauri Native Drag & Drop listener (V2)
   useEffect(() => {
-    let unlisten: any;
+    let unlisten: () => void;
     
     const setupListener = async () => {
-      unlisten = await listen<any>('tauri://drag-drop', (event) => {
-        console.log('Dropped files:', event.payload);
-        // event.payload is an object with { paths: string[], position: { x, y } } in Tauri 2
-        const paths = event.payload.paths || [];
-        
-        if (paths.length > 0) {
-          const newIcons = paths.map((filePath: string) => ({
-            id: Math.random().toString(36).substr(2, 9),
-            name: filePath.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, "") || "ملف",
-            icon: '📄',
-            color: 'bg-gray-500',
-            path: filePath
-          }));
-          setIcons(prev => [...prev, ...newIcons]);
+      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+      const appWindow = getCurrentWebviewWindow();
+      
+      unlisten = await appWindow.onDragDropEvent((event) => {
+        if (event.payload.type === 'drop') {
+          console.log('Dropped files:', event.payload.paths);
+          const paths = event.payload.paths || [];
+          
+          if (paths.length > 0) {
+            const newIcons = paths.map((filePath: string) => ({
+              id: Math.random().toString(36).substr(2, 9),
+              name: filePath.split(/[\\/]/).pop()?.replace(/\.[^/.]+$/, "") || "ملف",
+              icon: '📄',
+              color: 'bg-gray-500',
+              path: filePath
+            }));
+            setIcons(prev => [...prev, ...newIcons]);
+          }
         }
       });
     };
@@ -105,18 +109,19 @@ function App() {
   };
 
   return (
-    <div className="w-screen h-screen flex items-center justify-center overflow-hidden group">
+    <div className="w-screen h-screen flex items-center justify-center overflow-hidden group bg-transparent">
       <div 
-        className="w-full h-full flex items-center justify-center p-4 cursor-move relative"
+        className="w-full h-full flex items-center justify-center p-4 cursor-move relative bg-transparent"
         data-tauri-drag-region
       >
-        <div style={{ pointerEvents: 'auto' }}>
+        <div style={{ pointerEvents: 'auto' }} className="relative">
           {icons.length === 0 ? (
              <div 
-               className="w-[300px] h-[300px] rounded-full border-2 border-dashed border-white/20 flex items-center justify-center text-white/50 text-sm"
+               className="w-[300px] h-[300px] rounded-full border-2 border-dashed border-white/20 flex flex-col items-center justify-center text-white/50 text-sm gap-2"
                style={{ backgroundColor: `${panelColor}${Math.round(panelOpacity * 2.55).toString(16).padStart(2, '0')}` }}
              >
-               اسحب الملفات هنا
+               <span className="text-4xl">📥</span>
+               <span>اسحب الملفات هنا</span>
              </div>
           ) : (
              <IconGroup 
@@ -127,31 +132,49 @@ function App() {
              />
           )}
           
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 z-50">
-            <button onClick={() => setShowSettings(!showSettings)} className="text-xs bg-white/10 hover:bg-white/30 text-white px-2 py-1 rounded">
+          {/* Controls - visible on hover */}
+          <div className="absolute -top-12 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 z-50 whitespace-nowrap">
+            <button onClick={() => setShowSettings(!showSettings)} className="text-[10px] bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded backdrop-blur-md border border-white/10">
               ⚙️ الإعدادات
             </button>
-            <button onClick={handleCloseGroup} className="text-xs bg-red-500/50 hover:bg-red-500 text-white px-2 py-1 rounded">
-              ❌ إغلاق المجموعة
+            <button onClick={handleCloseGroup} className="text-[10px] bg-red-500/30 hover:bg-red-500 text-white px-2 py-1 rounded backdrop-blur-md border border-red-500/20">
+              ❌ إغلاق
             </button>
           </div>
 
           {showSettings && (
-            <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-black/80 p-3 rounded-lg border border-white/20 flex flex-col gap-2 z-50 min-w-[150px]">
-              <label className="text-white text-xs flex flex-col gap-1">
-                اللون:
-                <input type="color" value={panelColor} onChange={e => setPanelColor(e.target.value)} className="w-full h-6 rounded cursor-pointer" />
-              </label>
-              <label className="text-white text-xs flex flex-col gap-1">
-                الشفافية: {panelOpacity}%
-                <input type="range" min="0" max="100" value={panelOpacity} onChange={e => setPanelOpacity(Number(e.target.value))} className="w-full cursor-pointer" />
-              </label>
+            <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-black/80 p-3 rounded-xl border border-white/20 flex flex-col gap-3 z-50 min-w-[180px] backdrop-blur-xl shadow-2xl">
+              <div className="flex flex-col gap-1">
+                <span className="text-white text-[10px] opacity-70">اللون الأساسي:</span>
+                <input type="color" value={panelColor} onChange={e => setPanelColor(e.target.value)} className="w-full h-8 rounded-lg cursor-pointer bg-transparent" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="flex justify-between text-[10px] text-white">
+                  <span className="opacity-70">الشفافية:</span>
+                  <span>{panelOpacity}%</span>
+                </div>
+                <input type="range" min="0" max="100" value={panelOpacity} onChange={e => setPanelOpacity(Number(e.target.value))} className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer" />
+              </div>
+              <div className="flex flex-col gap-1 mt-1">
+                <span className="text-white text-[10px] opacity-70">التخطيط:</span>
+                <div className="flex gap-1">
+                  {(['circle', 'line', 'vertical'] as const).map(l => (
+                    <button 
+                      key={l}
+                      onClick={() => setLayout(l)}
+                      className={`flex-1 text-[9px] py-1 rounded ${layout === l ? 'bg-white/30 text-white' : 'bg-white/5 text-white/50'}`}
+                    >
+                      {l === 'circle' ? 'دائري' : l === 'line' ? 'أفقي' : 'رأسي'}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
           
-          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-            <p className="text-[10px] text-white/50 bg-black/20 px-2 py-1 rounded-full whitespace-nowrap">
-              3 كليك يمين للحذف
+          <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <p className="text-[9px] text-white/40 bg-black/40 px-3 py-1 rounded-full whitespace-nowrap backdrop-blur-md">
+              💡 3 نقرات يمين للحذف
             </p>
           </div>
         </div>
