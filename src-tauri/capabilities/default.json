@@ -12,7 +12,6 @@
     "core:window:allow-set-size",
     "core:window:allow-set-focus",
     "core:window:allow-close",
-    "core:webview:allow-load-url",
     "core:event:default"
   ]
 }
