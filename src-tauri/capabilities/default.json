@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main", "group_*"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "dialog:default",
+    "autostart:default",
+    "core:window:allow-set-title",
+    "core:window:allow-set-size",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:webview:allow-load-url",
+    "core:event:default"
+  ]
+}
