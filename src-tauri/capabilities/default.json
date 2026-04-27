@@ -16,7 +16,6 @@
     "core:window:allow-set-focus",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
-    "core:webview:allow-convert-file-src",
     "core:event:default"
   ]
 }
