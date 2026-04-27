@@ -94,24 +94,33 @@ export default function App() {
 
   // File drop
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenFn: (() => void) | undefined;
+    
     appWindow.onDragDropEvent(ev => {
       if (ev.payload.type === 'over')  setIsDragOver(true);
       if (ev.payload.type === 'leave') setIsDragOver(false);
       if (ev.payload.type === 'drop') {
         setIsDragOver(false);
         const paths: string[] = (ev.payload as { type: string; paths: string[] }).paths ?? [];
-        if (paths.length)
-          setIcons(prev => [...prev, ...paths.map(p => ({
-            id:    Math.random().toString(36).slice(2, 11),
-            name:  p.split(/[/\\]/).pop()?.replace(/\.[^/.]+$/, '') || 'ملف',
-            icon:  '📄',
-            color: 'bg-gray-600',
-            path:  p,
-          }))]);
+        if (paths.length) {
+          setIcons(prev => {
+            // Prevent exact duplicates in the same drop
+            const newIcons = paths.filter(p => !prev.some(i => i.path === p)).map(p => ({
+              id:    Math.random().toString(36).slice(2, 11),
+              name:  p.split(/[/\\]/).pop()?.replace(/\.[^/.]+$/, '') || 'ملف',
+              icon:  '📄',
+              color: 'bg-gray-600',
+              path:  p,
+            }));
+            return [...prev, ...newIcons];
+          });
+        }
       }
-    }).then(fn => { unlisten = fn; });
-    return () => { unlisten?.(); };
+    }).then(fn => { unlistenFn = fn; });
+
+    return () => {
+      if (unlistenFn) unlistenFn();
+    };
   }, [appWindow]);
 
   // Right-click on the group → context menu
