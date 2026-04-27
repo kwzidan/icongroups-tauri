@@ -5,12 +5,14 @@ interface DesktopIconProps {
   icon: {
     id: string;
     name: string;
-    icon: string;
+    icon: string;  // either emoji OR a base64 data URL from get_file_icon
     color: string;
     path: string;
   };
   onRemove?: () => void;
 }
+
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp'];
 
 const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
@@ -18,47 +20,31 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
   const ext = icon.path.split('.').pop()?.toLowerCase();
 
   useEffect(() => {
-    if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico'].includes(ext)) {
+    // If the icon field is already a base64/data URL set by App.tsx, use it directly
+    if (icon.icon.startsWith('data:image')) {
+      setImgSrc(icon.icon);
+      return;
+    }
+    // If the file itself is an image, convert the path for the webview
+    if (ext && IMAGE_EXTS.includes(ext)) {
       setImgSrc(convertFileSrc(icon.path));
-    } else {
-      // Fetch the real Windows icon via PowerShell
-      invoke<string>('get_file_icon', { path: icon.path })
-        .then(base64 => {
-          setImgSrc(base64);
-        })
-        .catch(err => {
-          console.warn('Failed to get real icon:', err);
-        });
+      return;
     }
-  }, [icon.path, ext]);
-
-  const getFallbackIcon = () => {
-    switch (ext) {
-      case 'exe': case 'msi': return '⚙️';
-      case 'txt': case 'md': return '📝';
-      case 'pdf': return '📕';
-      case 'zip': case 'rar': case '7z': return '🗜️';
-      case 'mp4': case 'mkv': case 'avi': return '🎬';
-      case 'mp3': case 'wav': return '🎵';
-      case 'lnk': return '🔗';
-      case 'doc': case 'docx': return '📄';
-      case 'xls': case 'xlsx': return '📊';
-      default: return icon.icon; // fallback to the one set during drop
-    }
-  };
+    // Try to fetch the real Windows icon via Rust + PowerShell
+    invoke<string>('get_file_icon', { path: icon.path })
+      .then(b64 => setImgSrc(b64))
+      .catch(() => setImgSrc(null));
+  }, [icon.icon, icon.path, ext]);
 
   const handleOpen = async () => {
-    try {
-      await invoke('open_path', { path: icon.path });
-    } catch (error) {
-      console.error('Failed to open path:', error);
-    }
+    try { await invoke('open_path', { path: icon.path }); }
+    catch (e) { console.error(e); }
   };
 
   return (
-    <div 
+    <div
       className="group relative flex flex-col items-center justify-center p-3 rounded-xl transition-all hover:scale-110"
-      onContextMenu={(e) => {
+      onContextMenu={e => {
         if (e.ctrlKey && onRemove) {
           e.preventDefault();
           e.stopPropagation();
@@ -66,30 +52,24 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
         }
       }}
     >
+      {/* Remove button on hover */}
       {onRemove && (
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity z-50 shadow-md"
-          title="حذف الأيقونة"
-        >
-          ✕
-        </button>
+          onClick={e => { e.stopPropagation(); onRemove(); }}
+          className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full items-center justify-center text-xs hidden group-hover:flex z-50 shadow-md transition-all"
+          title="حذف (أو Ctrl+كليك يمين)"
+        >✕</button>
       )}
-      <button
-        onClick={handleOpen}
-        className="active:scale-95 transition-transform"
-      >
-        <div className={`w-14 h-14 flex items-center justify-center rounded-2xl shadow-lg text-3xl transition-transform overflow-hidden ${imgSrc ? 'bg-transparent' : icon.color}`}>
-          {imgSrc ? (
-            <img src={imgSrc} alt={icon.name} className="w-full h-full object-cover" />
-          ) : (
-            getFallbackIcon()
-          )}
+
+      <button onClick={handleOpen} className="active:scale-95 transition-transform" onMouseDown={e => e.stopPropagation()}>
+        <div className={`w-14 h-14 flex items-center justify-center rounded-2xl shadow-lg text-3xl overflow-hidden ${imgSrc ? '' : icon.color}`}>
+          {imgSrc
+            ? <img src={imgSrc} alt={icon.name} className="w-full h-full object-contain" />
+            : icon.icon
+          }
         </div>
       </button>
+
       <span className="absolute top-full mt-2 px-2 py-1 bg-black/80 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
         {icon.name}
       </span>
