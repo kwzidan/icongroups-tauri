@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import IconGroup from './components/IconGroup';
 import type { LayoutType } from './components/IconGroup';
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
 interface IconData {
   id: string;
@@ -11,20 +11,22 @@ interface IconData {
   path: string;
 }
 
-// Get the unique window label to use as the localStorage key
-// This ensures each window has its own independent set of icons
-function getWindowId(): string {
-  const appWindow = getCurrentWebviewWindow();
-  return appWindow.label; // e.g. "main", "group_uuid-..."
-}
-
-// Get layout from URL hash — this ALWAYS takes priority
-function getLayoutFromUrl(): LayoutType | null {
-  const hash = window.location.hash.replace('#', '');
-  const params = new URLSearchParams(hash);
-  const l = params.get('layout');
-  if (l === 'circle' || l === 'line' || l === 'vertical') return l;
-  return null;
+// Read layout from URL query string: index.html?layout=line
+function getLayoutFromUrl(): LayoutType {
+  // Query string (new windows): ?layout=line
+  const searchParams = new URLSearchParams(window.location.search);
+  const fromSearch = searchParams.get('layout');
+  if (fromSearch === 'circle' || fromSearch === 'line' || fromSearch === 'vertical') {
+    return fromSearch;
+  }
+  // Hash fallback (old links): #layout=line
+  const hashStr = window.location.hash.replace(/^#/, '');
+  const hashParams = new URLSearchParams(hashStr);
+  const fromHash = hashParams.get('layout');
+  if (fromHash === 'circle' || fromHash === 'line' || fromHash === 'vertical') {
+    return fromHash;
+  }
+  return 'circle';
 }
 
 const DEMO_ICONS: IconData[] = [
@@ -34,196 +36,180 @@ const DEMO_ICONS: IconData[] = [
 ];
 
 function App() {
-  const windowId = getWindowId();
-  const iconsKey = `icongroups_icons_${windowId}`;
-  const colorKey = `icongroups_color_${windowId}`;
-  const opacityKey = `icongroups_opacity_${windowId}`;
+  const appWindow = getCurrentWebviewWindow();
+  const windowId = appWindow.label;
 
-  // Layout: URL hash takes priority, then localStorage, then default 'circle'
-  const [layout, setLayout] = useState<LayoutType>(() => {
-    const fromUrl = getLayoutFromUrl();
-    if (fromUrl) return fromUrl;
-    return (localStorage.getItem(`icongroups_layout_${windowId}`) as LayoutType) || 'circle';
-  });
+  // Storage keys are unique per window label
+  const iconsKey   = `ig_icons_${windowId}`;
+  const colorKey   = `ig_color_${windowId}`;
+  const opacityKey = `ig_opacity_${windowId}`;
+  const layoutKey  = `ig_layout_${windowId}`;
+
+  // Layout: URL always wins (new window from tray), fallback to saved, fallback to circle
+  const urlLayout = getLayoutFromUrl();
+  const [layout, setLayout] = useState<LayoutType>(urlLayout);
 
   const [icons, setIcons] = useState<IconData[]>(() => {
     const saved = localStorage.getItem(iconsKey);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (_) {}
-    }
-    // New window → start empty so user can drag files in
-    // Only the main window starts with demo icons
+    if (saved) { try { return JSON.parse(saved); } catch (_) {} }
+    // Main window gets demo icons; new group windows start empty
     return windowId === 'main' ? DEMO_ICONS : [];
   });
 
-  const [panelColor, setPanelColor] = useState(() =>
-    localStorage.getItem(colorKey) || '#000000'
-  );
-  const [panelOpacity, setPanelOpacity] = useState(() =>
-    Number(localStorage.getItem(opacityKey) ?? 40)
-  );
+  const [panelColor, setPanelColor]     = useState(() => localStorage.getItem(colorKey)   || '#0f0f1a');
+  const [panelOpacity, setPanelOpacity] = useState(() => Number(localStorage.getItem(opacityKey) ?? 55));
   const [showSettings, setShowSettings] = useState(false);
+  const [isDragOver, setIsDragOver]     = useState(false);
 
-  // Persist everything whenever it changes
-  useEffect(() => {
-    localStorage.setItem(iconsKey, JSON.stringify(icons));
-  }, [icons, iconsKey]);
+  // Persist all state
+  useEffect(() => { localStorage.setItem(iconsKey,   JSON.stringify(icons)); }, [icons,        iconsKey]);
+  useEffect(() => { localStorage.setItem(layoutKey,  layout);                }, [layout,       layoutKey]);
+  useEffect(() => { localStorage.setItem(colorKey,   panelColor);            }, [panelColor,   colorKey]);
+  useEffect(() => { localStorage.setItem(opacityKey, String(panelOpacity));  }, [panelOpacity, opacityKey]);
 
-  useEffect(() => {
-    localStorage.setItem(`icongroups_layout_${windowId}`, layout);
-  }, [layout, windowId]);
-
-  useEffect(() => {
-    localStorage.setItem(colorKey, panelColor);
-  }, [panelColor, colorKey]);
-
-  useEffect(() => {
-    localStorage.setItem(opacityKey, String(panelOpacity));
-  }, [panelOpacity, opacityKey]);
-
-  // Tauri v2 native drag-and-drop — add dropped files as icons
+  // Tauri v2 native drag-and-drop for adding files
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-
     const setup = async () => {
-      const appWindow = getCurrentWebviewWindow();
       unlisten = await appWindow.onDragDropEvent((event) => {
-        if (event.payload.type === 'drop') {
-          const paths: string[] = (event.payload as { type: string; paths: string[] }).paths || [];
+        const type = event.payload.type;
+        if (type === 'over')               { setIsDragOver(true);  return; }
+        if (type === 'leave' || type === 'cancel') { setIsDragOver(false); return; }
+        if (type === 'drop') {
+          setIsDragOver(false);
+          const paths: string[] = (event.payload as { type: string; paths: string[] }).paths ?? [];
           if (paths.length > 0) {
-            const newIcons: IconData[] = paths.map((filePath) => ({
-              id: Math.random().toString(36).substr(2, 9),
-              name: filePath.split(/[/\\]/).pop()?.replace(/\.[^/.]+$/, '') || 'ملف',
-              icon: '📄',
-              color: 'bg-gray-600',
-              path: filePath,
-            }));
-            setIcons((prev) => [...prev, ...newIcons]);
+            setIcons(prev => [
+              ...prev,
+              ...paths.map(p => ({
+                id:    Math.random().toString(36).slice(2, 11),
+                name:  p.split(/[/\\]/).pop()?.replace(/\.[^/.]+$/, '') || 'ملف',
+                icon:  '📄',
+                color: 'bg-gray-600',
+                path:  p,
+              })),
+            ]);
           }
         }
       });
     };
-
     setup();
     return () => { unlisten?.(); };
   }, []);
 
-  const handleRemoveIcon = (id: string) => {
-    setIcons((prev) => prev.filter((icon) => icon.id !== id));
-  };
+  // ---- Handlers ----
+  // startDragging() is the only reliable way to drag in Tauri on Windows
+  const handleDragStart = useCallback(async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await appWindow.startDragging();
+  }, [appWindow]);
 
-  const handleCloseGroup = async () => {
-    const appWindow = getCurrentWebviewWindow();
-    await appWindow.close();
-  };
+  const handleClose   = async () => { await appWindow.close(); };
+  const handleRemove  = (id: string) => setIcons(prev => prev.filter(i => i.id !== id));
 
-  const bgStyle = {
-    backgroundColor: `${panelColor}${Math.round(panelOpacity * 2.55).toString(16).padStart(2, '0')}`,
-  };
+  // Build background color with opacity
+  const alpha    = Math.round(panelOpacity * 2.55).toString(16).padStart(2, '0');
+  const bgStyle  = { backgroundColor: `${panelColor}${alpha}` };
 
   return (
-    // The ENTIRE screen is the drag region — clicking empty space moves the window
-    <div
-      className="w-screen h-screen flex items-center justify-center overflow-hidden group bg-transparent"
-      data-tauri-drag-region
-    >
-      {/* Inner wrapper — pointer-events: none so drag region works everywhere */}
-      <div className="relative flex items-center justify-center" style={{ pointerEvents: 'none' }}>
+    <div className="w-screen h-screen flex flex-col overflow-hidden bg-transparent">
 
-        {/* Icon group — restore pointer events ONLY here */}
-        <div style={{ pointerEvents: 'auto' }}>
-          {icons.length === 0 ? (
-            <div
-              className="w-[280px] h-[280px] rounded-full border-2 border-dashed border-white/30 flex flex-col items-center justify-center text-white/50 text-sm gap-3"
-              style={bgStyle}
-            >
-              <span className="text-5xl">📥</span>
-              <span className="text-center px-6">اسحب الملفات هنا</span>
-            </div>
-          ) : (
-            <IconGroup
-              layout={layout}
-              icons={icons}
-              onRemove={handleRemoveIcon}
-              style={bgStyle}
-            />
-          )}
+      {/* ── TOP DRAG BAR ──────────────────────────────────────────────────────── */}
+      {/* onMouseDown → startDragging(). Clicking buttons stops propagation.     */}
+      <div
+        className="flex items-center justify-between px-3 py-2 flex-shrink-0 select-none cursor-grab active:cursor-grabbing rounded-t-2xl"
+        style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(16px)' }}
+        onMouseDown={handleDragStart}
+      >
+        <span className="text-white/40 text-[11px] tracking-wide">⠿ IconGroups</span>
+
+        {/* Buttons stop mouse-down from bubbling to drag handler */}
+        <div className="flex items-center gap-2" onMouseDown={e => e.stopPropagation()}>
+          <button
+            onClick={() => setShowSettings(s => !s)}
+            title="الإعدادات"
+            className={`text-sm w-7 h-7 flex items-center justify-center rounded-full transition-all ${showSettings ? 'bg-white/25 text-white' : 'text-white/50 hover:text-white hover:bg-white/15'}`}
+          >⚙️</button>
+          <button
+            onClick={handleClose}
+            title="إغلاق"
+            className="text-sm w-7 h-7 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-red-500/70 transition-all"
+          >✕</button>
         </div>
+      </div>
 
-        {/* Controls — appear on hover, restore pointer events */}
+      {/* ── SETTINGS PANEL ────────────────────────────────────────────────────── */}
+      {showSettings && (
         <div
-          className="absolute -top-14 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-200 flex gap-2 z-50 whitespace-nowrap"
-          style={{ pointerEvents: 'auto' }}
+          className="flex-shrink-0 px-3 pt-2 pb-3 flex flex-col gap-2.5 border-b border-white/10"
+          style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(16px)' }}
         >
-          <button
-            onClick={() => setShowSettings((s) => !s)}
-            className="text-[11px] bg-black/50 hover:bg-white/20 text-white px-3 py-1.5 rounded-lg backdrop-blur-md border border-white/10 transition-all"
-          >
-            ⚙️ الإعدادات
-          </button>
-          <button
-            onClick={handleCloseGroup}
-            className="text-[11px] bg-red-500/30 hover:bg-red-500/80 text-white px-3 py-1.5 rounded-lg backdrop-blur-md border border-red-500/20 transition-all"
-          >
-            ✕ إغلاق
-          </button>
-        </div>
+          {/* Layout row */}
+          <div className="flex gap-1.5">
+            {(['circle', 'line', 'vertical'] as const).map(l => (
+              <button
+                key={l}
+                onClick={() => setLayout(l)}
+                className={`flex-1 text-[10px] py-1.5 rounded-lg font-medium transition-all ${
+                  layout === l
+                    ? 'bg-white/25 text-white shadow-inner'
+                    : 'bg-white/5 text-white/40 hover:bg-white/12 hover:text-white/70'
+                }`}
+              >
+                {l === 'circle' ? '⭕ دائري' : l === 'line' ? '➖ أفقي' : '⬆️ رأسي'}
+              </button>
+            ))}
+          </div>
 
-        {/* Settings panel */}
-        {showSettings && (
-          <div
-            className="absolute top-14 left-1/2 -translate-x-1/2 bg-black/85 p-4 rounded-2xl border border-white/15 flex flex-col gap-3 z-50 w-52 backdrop-blur-2xl shadow-2xl"
-            style={{ pointerEvents: 'auto' }}
-          >
-            {/* Layout switcher */}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-white/60 text-[10px] uppercase tracking-wide">التخطيط</span>
-              <div className="flex gap-1.5">
-                {(['circle', 'line', 'vertical'] as const).map((l) => (
-                  <button
-                    key={l}
-                    onClick={() => setLayout(l)}
-                    className={`flex-1 text-[10px] py-1.5 rounded-lg font-medium transition-all ${
-                      layout === l
-                        ? 'bg-white/25 text-white shadow-inner'
-                        : 'bg-white/5 text-white/40 hover:bg-white/10'
-                    }`}
-                  >
-                    {l === 'circle' ? '⭕ دائري' : l === 'line' ? '➖ أفقي' : '⬆️ رأسي'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Color */}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-white/60 text-[10px] uppercase tracking-wide">اللون</span>
+          {/* Color + Opacity row */}
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={panelColor}
+              onChange={e => setPanelColor(e.target.value)}
+              className="w-8 h-7 rounded-md cursor-pointer border border-white/10 bg-transparent flex-shrink-0"
+              title="لون الخلفية"
+            />
+            <div className="flex-1 flex items-center gap-1.5">
+              <span className="text-white/30 text-[9px]">شفافية</span>
               <input
-                type="color"
-                value={panelColor}
-                onChange={(e) => setPanelColor(e.target.value)}
-                className="w-full h-9 rounded-lg cursor-pointer border-0 bg-transparent"
-              />
-            </div>
-
-            {/* Opacity */}
-            <div className="flex flex-col gap-1.5">
-              <div className="flex justify-between">
-                <span className="text-white/60 text-[10px] uppercase tracking-wide">الشفافية</span>
-                <span className="text-white/80 text-[10px]">{panelOpacity}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
+                type="range" min="0" max="100"
                 value={panelOpacity}
-                onChange={(e) => setPanelOpacity(Number(e.target.value))}
-                className="w-full accent-white"
+                onChange={e => setPanelOpacity(Number(e.target.value))}
+                className="flex-1 h-1 accent-white"
               />
+              <span className="text-white/50 text-[9px] w-7 text-right">{panelOpacity}%</span>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── ICON AREA ─────────────────────────────────────────────────────────── */}
+      <div
+        className="flex-1 flex items-center justify-center overflow-hidden relative rounded-b-2xl"
+        style={bgStyle}
+      >
+        {/* Drag-over highlight */}
+        {isDragOver && (
+          <div className="absolute inset-0 border-2 border-dashed border-white/50 rounded-b-2xl pointer-events-none z-20" />
+        )}
+
+        {icons.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 text-white/35 select-none">
+            <span className="text-5xl">📥</span>
+            <span className="text-xs">اسحب الملفات هنا</span>
+          </div>
+        ) : (
+          <IconGroup
+            layout={layout}
+            icons={icons}
+            onRemove={handleRemove}
+            style={{}}
+          />
         )}
       </div>
+
     </div>
   );
 }
