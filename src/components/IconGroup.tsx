@@ -14,11 +14,11 @@ interface IconData {
 interface IconGroupProps {
   layout: LayoutType;
   icons: IconData[];
-  onContextMenu?: (e: React.MouseEvent, id: string) => void;
+  onRemove?: (id: string) => void;
   style?: React.CSSProperties;
 }
 
-const IconGroup: React.FC<IconGroupProps> = ({ layout, icons, onContextMenu, style }) => {
+const IconGroup: React.FC<IconGroupProps> = ({ layout, icons, onRemove, style }) => {
   const getLayoutClasses = () => {
     switch (layout) {
       case 'line':
@@ -55,9 +55,8 @@ const IconGroup: React.FC<IconGroupProps> = ({ layout, icons, onContextMenu, sty
             key={icon.id}
             className="icon-animation"
             style={iconStyle}
-            onContextMenu={(e) => onContextMenu && onContextMenu(e, icon.id)}
           >
-            <DesktopIcon icon={icon} />
+            <DesktopIcon icon={icon} onRemove={onRemove ? () => onRemove(icon.id) : undefined} />
           </div>
         );
       })}

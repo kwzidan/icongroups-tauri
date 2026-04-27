@@ -35,7 +35,6 @@ function App() {
   const [panelOpacity, setPanelOpacity] = useState(40);
   const [showSettings, setShowSettings] = useState(false);
 
-  const rightClickCounts = useRef<Record<string, { count: number; timer: ReturnType<typeof setTimeout> | null }>>({});
 
   useEffect(() => {
     localStorage.setItem('icongroups_icons', JSON.stringify(icons));
@@ -85,22 +84,8 @@ function App() {
     return () => { if (unlisten) unlisten(); };
   }, []);
 
-  const handleContextMenu = (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    if (!rightClickCounts.current[id]) {
-      rightClickCounts.current[id] = { count: 0, timer: null };
-    }
-    const clickData = rightClickCounts.current[id];
-    clickData.count += 1;
-    if (clickData.timer) clearTimeout(clickData.timer);
-    if (clickData.count >= 3) {
-      setIcons(prev => prev.filter(icon => icon.id !== id));
-      delete rightClickCounts.current[id];
-    } else {
-      clickData.timer = setTimeout(() => {
-        clickData.count = 0;
-      }, 1000);
-    }
+  const handleRemoveIcon = (id: string) => {
+    setIcons(prev => prev.filter(icon => icon.id !== id));
   };
 
   const handleCloseGroup = async () => {
@@ -127,7 +112,7 @@ function App() {
              <IconGroup 
                layout={layout} 
                icons={icons} 
-               onContextMenu={handleContextMenu} 
+               onRemove={handleRemoveIcon} 
                style={{ backgroundColor: `${panelColor}${Math.round(panelOpacity * 2.55).toString(16).padStart(2, '0')}` }}
              />
           )}
@@ -172,11 +157,6 @@ function App() {
             </div>
           )}
           
-          <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-            <p className="text-[9px] text-white/40 bg-black/40 px-3 py-1 rounded-full whitespace-nowrap backdrop-blur-md">
-              💡 3 نقرات يمين للحذف
-            </p>
-          </div>
         </div>
       </div>
     </div>
