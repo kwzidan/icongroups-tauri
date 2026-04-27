@@ -33,10 +33,11 @@ fn create_group_window<R: Runtime>(app: tauri::AppHandle<R>, layout: String) {
         tauri::WebviewUrl::App(format!("index.html?layout={}", layout).into()),
     )
     .title("IconGroup")
-    .inner_size(380.0, 380.0)
+    .inner_size(800.0, 600.0)
     .transparent(true)
     .decorations(false)
     .shadow(false)
+    .resizable(true)
     .skip_taskbar(true)
     .build()
     .unwrap();

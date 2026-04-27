@@ -14,11 +14,10 @@ interface IconData {
 function getLayoutFromUrl(): LayoutType {
   const p = new URLSearchParams(window.location.search);
   const l = p.get('layout');
-  if (l === 'circle' || l === 'line' || l === 'vertical') return l;
-  // hash fallback
+  if (l === 'circle' || l === 'line' || l === 'vertical' || l === 'dock') return l as LayoutType;
   const h = new URLSearchParams(window.location.hash.replace(/^#/, ''));
   const lh = h.get('layout');
-  if (lh === 'circle' || lh === 'line' || lh === 'vertical') return lh;
+  if (lh === 'circle' || lh === 'line' || lh === 'vertical' || lh === 'dock') return lh as LayoutType;
   return 'circle';
 }
 
@@ -72,7 +71,7 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     appWindow.onDragDropEvent(ev => {
       if (ev.payload.type === 'over')              setIsDragOver(true);
-      if (ev.payload.type === 'leave') setIsDragOver(false);
+      if (ev.payload.type === 'leave')             setIsDragOver(false);
       if (ev.payload.type === 'drop') {
         setIsDragOver(false);
         const paths: string[] = (ev.payload as { type: string; paths: string[] }).paths ?? [];
@@ -85,21 +84,12 @@ export default function App() {
       }
     }).then(fn => { unlisten = fn; });
     return () => { unlisten?.(); };
-  }, []);
-
-  // Left-click on background → drag window
-  const onBgMouseDown = useCallback(async (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    setCtx(null);
-    setShowColors(false);
-    await appWindow.startDragging();
   }, [appWindow]);
 
   // Right-click anywhere → context menu
   const onRightClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // keep menu inside window
     const menuW = 196, menuH = 260;
     const winW  = window.innerWidth,  winH = window.innerHeight;
     setCtx({
@@ -109,6 +99,14 @@ export default function App() {
     setShowColors(false);
   }, []);
 
+  const handleDragStart = useCallback(async (e: React.MouseEvent) => {
+    if (e.button === 0) { // Only left click
+      try {
+        await appWindow.startDragging();
+      } catch (err) {}
+    }
+  }, [appWindow]);
+
   const handleClose  = async () => { await appWindow.close(); };
   const handleRemove = (id: string) => setIcons(prev => prev.filter(i => i.id !== id));
 
@@ -116,18 +114,18 @@ export default function App() {
   const bgStyle  = { backgroundColor: `${panelColor}${alpha}` };
 
   return (
-    // Full-screen transparent container — mousedown drags the window
+    // Full-screen drag region using Tauri's native attribute and startDragging fallback
     <div
       className="w-screen h-screen overflow-hidden bg-transparent"
-      onMouseDown={onBgMouseDown}
       onContextMenu={onRightClick}
+      onMouseDown={handleDragStart}
+      data-tauri-drag-region
     >
-      {/* Icon group — pointer events restored, propagation stopped so it doesn't trigger drag */}
-      <div className="w-full h-full flex items-center justify-center" style={{ pointerEvents: 'none' }}>
+      <div className="w-full h-full flex items-center justify-center pointer-events-none">
         <div
-          style={{ pointerEvents: 'auto', position: 'relative' }}
-          onMouseDown={e => e.stopPropagation()}
+          className="pointer-events-auto relative"
           onContextMenu={onRightClick}
+          onMouseDown={(e) => e.stopPropagation()} // Prevent dragging when clicking inside the group
         >
           {isDragOver && (
             <div className="absolute inset-[-8px] border-2 border-dashed border-white/50 rounded-3xl pointer-events-none z-20 animate-pulse" />
@@ -135,12 +133,12 @@ export default function App() {
 
           {icons.length === 0 ? (
             <div
-              className="w-72 h-72 rounded-full flex flex-col items-center justify-center gap-3 text-white/40 select-none border-2 border-dashed border-white/20"
+              className="w-64 h-64 rounded-full flex flex-col items-center justify-center gap-3 text-white/40 select-none border-2 border-dashed border-white/20"
               style={bgStyle}
             >
               <span className="text-5xl">📥</span>
               <span className="text-xs">اسحب الملفات هنا</span>
-              <span className="text-[10px] opacity-60">كليك يمين للإعدادات</span>
+              <span className="text-[10px] opacity-60">كليك يمين للخيارات</span>
             </div>
           ) : (
             <IconGroup
@@ -170,18 +168,18 @@ export default function App() {
           {/* Layout options */}
           <div className="px-2 pt-2 pb-1">
             <p className="text-white/30 text-[9px] px-2 pb-1 uppercase tracking-wider">التخطيط</p>
-            {(['circle', 'line', 'vertical'] as const).map(l => (
+            {(['circle', 'line', 'vertical', 'dock'] as const).map(l => (
               <button
                 key={l}
                 onClick={() => { setLayout(l); setCtx(null); }}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${
+                className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
                   layout === l
                     ? 'bg-white/15 text-white'
                     : 'text-white/55 hover:bg-white/8 hover:text-white'
                 }`}
               >
                 <span className="w-4 text-center text-[10px]">{layout === l ? '✓' : ''}</span>
-                {l === 'circle' ? '⭕ دائري' : l === 'line' ? '➖ أفقي' : '⬆️ رأسي'}
+                {l === 'circle' ? '⭕ دائري' : l === 'line' ? '➖ أفقي' : l === 'vertical' ? '⬆️ رأسي' : '🖥️ ماك (Dock)'}
               </button>
             ))}
           </div>
