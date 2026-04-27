@@ -39,6 +39,7 @@ fn create_group_window<R: Runtime>(app: tauri::AppHandle<R>, layout: String) {
     .shadow(false)
     .resizable(true)
     .skip_taskbar(true)
+    .always_on_bottom(true)
     .build()
     .unwrap();
 }

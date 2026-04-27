@@ -15,12 +15,28 @@ interface DesktopIconProps {
 const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
 
+  const ext = icon.path.split('.').pop()?.toLowerCase();
+
   useEffect(() => {
-    const ext = icon.path.split('.').pop()?.toLowerCase();
     if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico'].includes(ext)) {
       setImgSrc(convertFileSrc(icon.path));
     }
-  }, [icon.path]);
+  }, [icon.path, ext]);
+
+  const getFallbackIcon = () => {
+    switch (ext) {
+      case 'exe': case 'msi': return '⚙️';
+      case 'txt': case 'md': return '📝';
+      case 'pdf': return '📕';
+      case 'zip': case 'rar': case '7z': return '🗜️';
+      case 'mp4': case 'mkv': case 'avi': return '🎬';
+      case 'mp3': case 'wav': return '🎵';
+      case 'lnk': return '🔗';
+      case 'doc': case 'docx': return '📄';
+      case 'xls': case 'xlsx': return '📊';
+      default: return icon.icon; // fallback to the one set during drop
+    }
+  };
 
   const handleOpen = async () => {
     try {
@@ -31,7 +47,16 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
   };
 
   return (
-    <div className="group relative flex flex-col items-center justify-center p-3 rounded-xl transition-all hover:scale-110">
+    <div 
+      className="group relative flex flex-col items-center justify-center p-3 rounded-xl transition-all hover:scale-110"
+      onContextMenu={(e) => {
+        if (e.ctrlKey && onRemove) {
+          e.preventDefault();
+          e.stopPropagation();
+          onRemove();
+        }
+      }}
+    >
       {onRemove && (
         <button
           onClick={(e) => {
@@ -52,7 +77,7 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
           {imgSrc ? (
             <img src={imgSrc} alt={icon.name} className="w-full h-full object-cover" />
           ) : (
-            icon.icon
+            getFallbackIcon()
           )}
         </div>
       </button>

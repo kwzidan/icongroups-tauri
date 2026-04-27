@@ -35,8 +35,9 @@ export default function App() {
   const iconsKey  = `ig_icons_${windowId}`;
   const colorKey  = `ig_color_${windowId}`;
   const alphaKey  = `ig_alpha_${windowId}`;
+  const layoutKey = `ig_layout_${windowId}`;
 
-  const [layout,       setLayout]       = useState<LayoutType>(getLayoutFromUrl);
+  const [layout,       setLayout]       = useState<LayoutType>(() => (localStorage.getItem(layoutKey) as LayoutType) || getLayoutFromUrl());
   const [icons,        setIcons]        = useState<IconData[]>(() => {
     try { const s = localStorage.getItem(iconsKey); if (s) return JSON.parse(s); } catch (_) {}
     return windowId === 'main' ? DEMO_ICONS : [];
@@ -49,6 +50,7 @@ export default function App() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Persist
+  useEffect(() => { localStorage.setItem(layoutKey, layout);                },  [layout,       layoutKey]);
   useEffect(() => { localStorage.setItem(iconsKey,  JSON.stringify(icons)); },  [icons,        iconsKey]);
   useEffect(() => { localStorage.setItem(colorKey,  panelColor);            },  [panelColor,   colorKey]);
   useEffect(() => { localStorage.setItem(alphaKey,  String(panelOpacity));  },  [panelOpacity, alphaKey]);
@@ -115,8 +117,9 @@ export default function App() {
 
   return (
     // Full-screen drag region using Tauri's native attribute and startDragging fallback
+    // We use bg-black/5 (opacity 5%) so Windows receives pointer events on the transparent area
     <div
-      className="w-screen h-screen overflow-hidden bg-transparent"
+      className="w-screen h-screen overflow-hidden bg-black/5"
       onContextMenu={onRightClick}
       onMouseDown={handleDragStart}
       data-tauri-drag-region
