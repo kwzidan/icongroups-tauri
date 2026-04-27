@@ -23,6 +23,40 @@ fn open_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn get_file_icon(path: String) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        use std::os::windows::process::CommandExt;
+        let script = format!(
+            "$icon = [System.Drawing.Icon]::ExtractAssociatedIcon('{}'); \
+            $bitmap = $icon.ToBitmap(); \
+            $stream = New-Object System.IO.MemoryStream; \
+            $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png); \
+            $bytes = $stream.ToArray(); \
+            [Convert]::ToBase64String($bytes)",
+            path.replace("'", "''")
+        );
+        
+        let output = Command::new("powershell")
+            .args(&["-NoProfile", "-Command", &script])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+            .map_err(|e| e.to_string())?;
+            
+        let b64 = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if b64.is_empty() {
+            return Err("No icon found".into());
+        }
+        Ok(format!("data:image/png;base64,{}", b64))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Only supported on Windows".into())
+    }
+}
+
+#[tauri::command]
 fn create_group_window<R: Runtime>(app: tauri::AppHandle<R>, layout: String) {
     let id = uuid::Uuid::new_v4().to_string();
     let label = format!("group_{}", id);
@@ -108,7 +142,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_path, create_group_window])
+        .invoke_handler(tauri::generate_handler![open_path, create_group_window, get_file_icon])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

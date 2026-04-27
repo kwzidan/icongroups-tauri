@@ -55,6 +55,19 @@ export default function App() {
   useEffect(() => { localStorage.setItem(colorKey,  panelColor);            },  [panelColor,   colorKey]);
   useEffect(() => { localStorage.setItem(alphaKey,  String(panelOpacity));  },  [panelOpacity, alphaKey]);
 
+  // Anti-minimize (Win+D protection attempt)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    appWindow.onResized(async () => {
+      try {
+        if (await appWindow.isMinimized()) {
+          await appWindow.unminimize();
+        }
+      } catch (e) {}
+    }).then(fn => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, [appWindow]);
+
   // Close context menu on outside click
   useEffect(() => {
     if (!ctx) return;
@@ -116,19 +129,15 @@ export default function App() {
   const bgStyle  = { backgroundColor: `${panelColor}${alpha}` };
 
   return (
-    // Full-screen drag region using Tauri's native attribute and startDragging fallback
-    // We use bg-black/5 (opacity 5%) so Windows receives pointer events on the transparent area
-    <div
-      className="w-screen h-screen overflow-hidden bg-black/5"
-      onContextMenu={onRightClick}
-      onMouseDown={handleDragStart}
-      data-tauri-drag-region
-    >
-      <div className="w-full h-full flex items-center justify-center pointer-events-none">
+    // Full-screen transparent wrapper that passes clicks through
+    <div className="w-screen h-screen overflow-hidden bg-transparent pointer-events-none">
+      <div className="w-full h-full flex items-center justify-center">
+        {/* The group itself receives events and handles dragging */}
         <div
           className="pointer-events-auto relative"
           onContextMenu={onRightClick}
-          onMouseDown={(e) => e.stopPropagation()} // Prevent dragging when clicking inside the group
+          onMouseDown={handleDragStart}
+          data-tauri-drag-region
         >
           {isDragOver && (
             <div className="absolute inset-[-8px] border-2 border-dashed border-white/50 rounded-3xl pointer-events-none z-20 animate-pulse" />

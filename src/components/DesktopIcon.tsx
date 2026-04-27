@@ -20,6 +20,15 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
   useEffect(() => {
     if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico'].includes(ext)) {
       setImgSrc(convertFileSrc(icon.path));
+    } else {
+      // Fetch the real Windows icon via PowerShell
+      invoke<string>('get_file_icon', { path: icon.path })
+        .then(base64 => {
+          setImgSrc(base64);
+        })
+        .catch(err => {
+          console.warn('Failed to get real icon:', err);
+        });
     }
   }, [icon.path, ext]);
 
