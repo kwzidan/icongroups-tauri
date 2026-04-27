@@ -72,7 +72,7 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     appWindow.onDragDropEvent(ev => {
       if (ev.payload.type === 'over')              setIsDragOver(true);
-      if (ev.payload.type === 'leave' || ev.payload.type === 'cancel') setIsDragOver(false);
+      if (ev.payload.type === 'leave') setIsDragOver(false);
       if (ev.payload.type === 'drop') {
         setIsDragOver(false);
         const paths: string[] = (ev.payload as { type: string; paths: string[] }).paths ?? [];
