@@ -207,7 +207,7 @@ pub fn run() {
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("IconGroups")
+                .tooltip("IconGroup- Kareem")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit"         => app.exit(0),

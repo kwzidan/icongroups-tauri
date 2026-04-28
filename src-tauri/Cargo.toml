@@ -1,8 +1,8 @@
 [package]
 name = "icongroups-tauri"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "IconGroup- Kareem - Desktop icon groups widget"
+authors = ["Kareem"]
 edition = "2021"
 
 [lib]
