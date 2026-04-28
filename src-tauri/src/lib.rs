@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 
 #[cfg(target_os = "windows")]
 use windows::{
+    core::w,
     Win32::Foundation::{HWND, LPARAM, BOOL},
     Win32::UI::WindowsAndMessaging::{
         FindWindowW, FindWindowExW, SendMessageW, SetParent, 
@@ -25,11 +26,11 @@ unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL 
     let name = String::from_utf16_lossy(&class_name[..len as usize]);
     
     if name == "WorkerW" {
-        let shell_view = FindWindowExW(hwnd, HWND(0), "SHELLDLL_DefView", None);
-        if !shell_view.is_invalid() {
+        let shell_view = FindWindowExW(hwnd, HWND(0), w!("SHELLDLL_DefView"), None);
+        if shell_view.0 != 0 {
             // This is the WorkerW we want - the one behind the desktop icons
-            let next_workerw = FindWindowExW(HWND(0), hwnd, "WorkerW", None);
-            if !next_workerw.is_invalid() {
+            let next_workerw = FindWindowExW(HWND(0), hwnd, w!("WorkerW"), None);
+            if next_workerw.0 != 0 {
                 *(lparam.0 as *mut HWND) = next_workerw;
                 return BOOL(0); // Stop enumerating
             }
@@ -41,14 +42,14 @@ unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL 
 #[cfg(target_os = "windows")]
 fn find_desktop_workerw() -> Option<HWND> {
     unsafe {
-        let progman = FindWindowW("Progman", None);
+        let progman = FindWindowW(w!("Progman"), None);
         // Send message to spawn WorkerW
         SendMessageW(progman, 0x052C, None, None);
         
         let mut workerw = HWND(0);
         let _ = EnumWindows(Some(enum_windows_proc), LPARAM(&mut workerw as *mut HWND as isize));
         
-        if workerw.is_invalid() {
+        if workerw.0 == 0 {
             // Fallback to progman if WorkerW not found
             Some(progman)
         } else {
