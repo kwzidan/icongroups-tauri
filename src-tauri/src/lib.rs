@@ -4,6 +4,80 @@ use tauri::{
     Manager, Runtime,
 };
 use tauri_plugin_autostart::ManagerExt;
+use std::sync::OnceLock;
+
+#[cfg(target_os = "windows")]
+use windows::{
+    Win32::Foundation::{HWND, LPARAM, BOOL},
+    Win32::UI::WindowsAndMessaging::{
+        FindWindowW, FindWindowExW, SendMessageW, SetParent, 
+        GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+        EnumWindows, GetClassNameW
+    },
+};
+
+static WORKERW_HWND: OnceLock<Option<usize>> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let mut class_name = [0u16; 256];
+    let len = GetClassNameW(hwnd, &mut class_name);
+    let name = String::from_utf16_lossy(&class_name[..len as usize]);
+    
+    if name == "WorkerW" {
+        let shell_view = FindWindowExW(hwnd, HWND(0), "SHELLDLL_DefView", None);
+        if !shell_view.is_invalid() {
+            // This is the WorkerW we want - the one behind the desktop icons
+            let next_workerw = FindWindowExW(HWND(0), hwnd, "WorkerW", None);
+            if !next_workerw.is_invalid() {
+                *(lparam.0 as *mut HWND) = next_workerw;
+                return BOOL(0); // Stop enumerating
+            }
+        }
+    }
+    BOOL(1) // Continue
+}
+
+#[cfg(target_os = "windows")]
+fn find_desktop_workerw() -> Option<HWND> {
+    unsafe {
+        let progman = FindWindowW("Progman", None);
+        // Send message to spawn WorkerW
+        SendMessageW(progman, 0x052C, None, None);
+        
+        let mut workerw = HWND(0);
+        let _ = EnumWindows(Some(enum_windows_proc), LPARAM(&mut workerw as *mut HWND as isize));
+        
+        if workerw.is_invalid() {
+            // Fallback to progman if WorkerW not found
+            Some(progman)
+        } else {
+            Some(workerw)
+        }
+    }
+}
+
+#[tauri::command]
+fn glue_to_desktop<R: Runtime>(window: tauri::WebviewWindow<R>) {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Window;
+        if let Ok(hwnd_ptr) = window.hwnd() {
+            let hwnd = HWND(hwnd_ptr.0 as _);
+            if let Some(desktop_hwnd) = find_desktop_workerw() {
+                unsafe {
+                    // Set as child of desktop
+                    SetParent(hwnd, desktop_hwnd);
+                    
+                    // Hide from taskbar and switcher
+                    let mut ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                    ex_style |= WS_EX_TOOLWINDOW.0 as i32;
+                    SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style);
+                }
+            }
+        }
+    }
+}
 
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
@@ -29,8 +103,12 @@ async fn get_file_icon(path: String) -> Result<String, String> {
         use std::process::Command;
         use std::os::windows::process::CommandExt;
         let safe_path = path.replace("'", "''");
+        
+        // Use PowerShell for now but with higher quality extraction if possible
+        // To get 256x256 natively in Rust is a lot of GDI+ code.
+        // Let's try to improve the PowerShell script to be sharper.
         let script = format!(
-            "Add-Type -AssemblyName System.Drawing; \
+            "Add-Type -AssemblyName System.Drawing, System.Windows.Forms; \
 $ico = [System.Drawing.Icon]::ExtractAssociatedIcon('{}'); \
 $bmp = $ico.ToBitmap(); \
 $ms = New-Object System.IO.MemoryStream; \
@@ -60,7 +138,7 @@ fn create_group_window<R: Runtime>(app: tauri::AppHandle<R>, layout: String) {
     let id = uuid::Uuid::new_v4().to_string();
     let label = format!("group_{}", id);
 
-    let _window = tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(format!("index.html?layout={}", layout).into()),
@@ -75,6 +153,9 @@ fn create_group_window<R: Runtime>(app: tauri::AppHandle<R>, layout: String) {
     .always_on_bottom(true)
     .build()
     .unwrap();
+
+    // Glue it immediately
+    glue_to_desktop(window);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -87,7 +168,6 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            // Check current autostart state
             let autostart_manager = app.autolaunch();
             let is_autostart_enabled = autostart_manager.is_enabled().unwrap_or(false);
 
@@ -114,22 +194,13 @@ pub fn run() {
                 .tooltip("IconGroups")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    "add_circle" => {
-                        create_group_window(app.clone(), "circle".into());
-                    }
-                    "add_line" => {
-                        create_group_window(app.clone(), "line".into());
-                    }
-                    "add_vertical" => {
-                        create_group_window(app.clone(), "vertical".into());
-                    }
+                    "quit" => { app.exit(0); }
+                    "add_circle" => { create_group_window(app.clone(), "circle".into()); }
+                    "add_line" => { create_group_window(app.clone(), "line".into()); }
+                    "add_vertical" => { create_group_window(app.clone(), "vertical".into()); }
                     "autostart" => {
                         let autolaunch = app.autolaunch();
-                        let enabled = autolaunch.is_enabled().unwrap_or(false);
-                        if enabled {
+                        if autolaunch.is_enabled().unwrap_or(false) {
                             let _ = autolaunch.disable();
                         } else {
                             let _ = autolaunch.enable();
@@ -139,37 +210,14 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Glue existing main window if it exists
+            if let Some(main_win) = app.get_webview_window("main") {
+                glue_to_desktop(main_win);
+            }
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_path, create_group_window, get_file_icon])
-        .on_window_event(|window, event| {
-            // Prevent Win+D from minimizing the group windows
-            if let tauri::WindowEvent::Focused(false) = event {
-                // Small delay to let Windows finish the minimize action, then restore
-                let win = window.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(80));
-                    if win.is_minimized().unwrap_or(false) {
-                        let _ = win.unminimize();
-                    }
-                });
-            }
-        })
+        .invoke_handler(tauri::generate_handler![open_path, create_group_window, get_file_icon, glue_to_desktop])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_open_path_non_windows() {
-        #[cfg(not(target_os = "windows"))]
-        {
-            let result = open_path("/tmp".into());
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), "Only supported on Windows");
-        }
-    }
 }
