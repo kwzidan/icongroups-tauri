@@ -14,23 +14,36 @@ interface IconData {
 interface IconGroupProps {
   layout: LayoutType;
   icons: IconData[];
+  spacing?: number;
   onRemove?: (id: string) => void;
   style?: React.CSSProperties;
 }
 
-const IconGroup: React.FC<IconGroupProps> = ({ layout, icons, onRemove, style }) => {
+const IconGroup: React.FC<IconGroupProps> = ({ layout, icons, spacing = 16, onRemove, style }) => {
   const getLayoutClasses = () => {
     switch (layout) {
       case 'line':
-        return 'flex-row gap-4 p-4 rounded-2xl';
+        return 'flex-row p-4 rounded-2xl';
       case 'vertical':
-        return 'flex-col gap-4 p-4 rounded-2xl';
+        return 'flex-col p-4 rounded-2xl';
       case 'circle':
         return 'relative w-[300px] h-[300px] rounded-full';
       case 'dock':
-        return 'flex-row gap-3 px-6 py-3 rounded-2xl items-end';
+        return 'flex-row px-6 py-3 rounded-2xl items-end';
       default:
-        return 'flex-row gap-4 p-4';
+        return 'flex-row p-4';
+    }
+  };
+
+  const getLayoutStyle = (): React.CSSProperties => {
+    switch (layout) {
+      case 'line':
+      case 'vertical':
+        return { gap: `${spacing}px` };
+      case 'dock':
+        return { gap: `${spacing * 0.75}px` };
+      default:
+        return {};
     }
   };
 
@@ -41,6 +54,7 @@ const IconGroup: React.FC<IconGroupProps> = ({ layout, icons, onRemove, style })
       className={`flex items-center justify-center group-animation backdrop-blur-md border border-white/10 ${getLayoutClasses()} ${isDock ? 'shadow-[0_20px_40px_rgba(0,0,0,0.5)] border-t-white/30 border-b-black/50' : ''}`}
       style={{
         ...style,
+        ...getLayoutStyle(),
         ...(isDock ? {
           background: 'linear-gradient(to bottom, rgba(255,255,255,0.1), rgba(0,0,0,0.4))',
           boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.3)',
@@ -53,7 +67,8 @@ const IconGroup: React.FC<IconGroupProps> = ({ layout, icons, onRemove, style })
         let iconStyle: React.CSSProperties = {};
         if (layout === 'circle') {
           const angle = (index / icons.length) * 360;
-          const radius = 100;
+          // Radius based on spacing and number of icons, with a min of 50
+          const radius = Math.max(50, spacing * 3 + icons.length * 5);
           const radian = (angle * Math.PI) / 180;
           iconStyle = {
             position: 'absolute',

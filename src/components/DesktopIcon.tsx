@@ -64,7 +64,7 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
       <button onClick={handleOpen} className="active:scale-95 transition-transform" onMouseDown={e => e.stopPropagation()}>
         <div className={`w-12 h-12 flex items-center justify-center overflow-hidden ${imgSrc ? '' : `rounded-xl shadow-md text-2xl ${icon.color}`}`}>
           {imgSrc
-            ? <img src={imgSrc} alt={icon.name} className="w-8 h-8 object-contain drop-shadow-md" />
+            ? <img src={imgSrc} alt={icon.name} className="w-8 h-8 object-contain drop-shadow-md" style={{ imageRendering: '-webkit-optimize-contrast' as any }} />
             : icon.icon
           }
         </div>

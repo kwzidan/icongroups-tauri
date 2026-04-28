@@ -34,6 +34,7 @@ export default function App() {
   const colorKey  = `ig_color_${windowId}`;
   const alphaKey  = `ig_alpha_${windowId}`;
   const layoutKey = `ig_layout_${windowId}`;
+  const spaceKey  = `ig_space_${windowId}`;
 
   const [layout,       setLayout]       = useState<LayoutType>(() => {
     const saved = localStorage.getItem(layoutKey) as LayoutType;
@@ -46,6 +47,7 @@ export default function App() {
   });
   const [panelColor,   setPanelColor]   = useState(() => localStorage.getItem(colorKey)  || '#0f0f1a');
   const [panelOpacity, setPanelOpacity] = useState(() => Number(localStorage.getItem(alphaKey) ?? 55));
+  const [spacing,      setSpacing]      = useState(() => Number(localStorage.getItem(spaceKey) ?? 16));
   const [ctx,          setCtx]          = useState<CtxPos | null>(null);
   const [showColors,   setShowColors]   = useState(false);
   const [isDragOver,   setIsDragOver]   = useState(false);
@@ -56,6 +58,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem(iconsKey,  JSON.stringify(icons)); }, [icons,        iconsKey]);
   useEffect(() => { localStorage.setItem(colorKey,  panelColor);            }, [panelColor,   colorKey]);
   useEffect(() => { localStorage.setItem(alphaKey,  String(panelOpacity));  }, [panelOpacity, alphaKey]);
+  useEffect(() => { localStorage.setItem(spaceKey,  String(spacing));       }, [spacing,      spaceKey]);
 
   // Anti-minimize: immediately restore when the OS minimizes (Win+D)
   useEffect(() => {
@@ -192,6 +195,7 @@ export default function App() {
             <IconGroup
               layout={layout}
               icons={icons}
+              spacing={spacing}
               onRemove={handleRemove}
               style={bgStyle}
             />
@@ -257,6 +261,17 @@ export default function App() {
                 </div>
               </div>
             )}
+            
+            {/* Spacing Slider */}
+            <div className="px-2 mt-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-white/40 text-[10px] whitespace-nowrap">تباعد</span>
+                <input type="range" min="4" max="48" value={spacing}
+                  onChange={e => setSpacing(Number(e.target.value))}
+                  className="flex-1 h-1 accent-white" />
+                <span className="text-white/50 text-[9px] w-5 text-right">{spacing}</span>
+              </div>
+            </div>
           </div>
 
           <div className="h-px bg-white/10 mx-2" />
