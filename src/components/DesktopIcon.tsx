@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
 interface DesktopIconProps {
   icon: {
     id: string;
     name: string;
-    icon: string;  // either emoji OR a base64 data URL from get_file_icon
+    /** Either an emoji, a base64 data:image URL, or a plain path to an image file */
+    icon: string;
     color: string;
     path: string;
   };
@@ -15,25 +16,30 @@ interface DesktopIconProps {
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp'];
 
 const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
-  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [imgSrc, setImgSrc] = React.useState<string | null>(null);
+  const fetching = React.useRef(false);
 
   const ext = icon.path.split('.').pop()?.toLowerCase();
 
-  useEffect(() => {
-    // If the icon field is already a base64/data URL set by App.tsx, use it directly
+  React.useEffect(() => {
+    // Already have a resolved image — use it directly
     if (icon.icon.startsWith('data:image')) {
       setImgSrc(icon.icon);
       return;
     }
-    // If the file itself is an image, convert the path for the webview
+    // The file itself is a viewable image
     if (ext && IMAGE_EXTS.includes(ext)) {
       setImgSrc(convertFileSrc(icon.path));
       return;
     }
-    // Try to fetch the real Windows icon via Rust + PowerShell
-    invoke<string>('get_file_icon', { path: icon.path })
-      .then(b64 => setImgSrc(b64))
-      .catch(() => setImgSrc(null));
+    // Emoji placeholder or unresolved — fetch the real Windows icon once
+    if (!fetching.current) {
+      fetching.current = true;
+      invoke<string>('get_file_icon', { path: icon.path })
+        .then(b64 => setImgSrc(b64))
+        .catch(() => setImgSrc(null))
+        .finally(() => { fetching.current = false; });
+    }
   }, [icon.icon, icon.path, ext]);
 
   const handleOpen = async () => {
@@ -41,9 +47,11 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
     catch (e) { console.error(e); }
   };
 
+  const isEmoji = !imgSrc && !icon.icon.startsWith('data:');
+
   return (
     <div
-      className="group relative flex flex-col items-center justify-center p-3 rounded-xl transition-all hover:scale-110"
+      className="group relative flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all duration-200 hover:scale-110 hover:brightness-110"
       onContextMenu={e => {
         if (e.ctrlKey && onRemove) {
           e.preventDefault();
@@ -52,25 +60,46 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
         }
       }}
     >
-      {/* Remove button on hover */}
+      {/* Remove button — visible on hover */}
       {onRemove && (
         <button
           onClick={e => { e.stopPropagation(); onRemove(); }}
-          className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full items-center justify-center text-xs hidden group-hover:flex z-50 shadow-md transition-all"
+          className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 hover:bg-red-400 text-white rounded-full items-center justify-center text-[10px] hidden group-hover:flex z-50 shadow-lg transition-colors"
           title="حذف (أو Ctrl+كليك يمين)"
         >✕</button>
       )}
 
-      <button onClick={handleOpen} className="active:scale-95 transition-transform" onMouseDown={e => e.stopPropagation()}>
-        <div className={`w-12 h-12 flex items-center justify-center overflow-hidden ${imgSrc ? '' : `rounded-xl shadow-md text-2xl ${icon.color}`}`}>
-          {imgSrc
-            ? <img src={imgSrc} alt={icon.name} className="w-8 h-8 object-contain drop-shadow-md" style={{ imageRendering: '-webkit-optimize-contrast' as any }} />
-            : icon.icon
-          }
+      {/* Icon button */}
+      <button
+        onClick={handleOpen}
+        onMouseDown={e => e.stopPropagation()}
+        className="active:scale-90 transition-transform focus:outline-none"
+      >
+        <div
+          className={`w-12 h-12 flex items-center justify-center overflow-hidden rounded-xl shadow-md ${
+            isEmoji ? `text-2xl ${icon.color}` : ''
+          }`}
+        >
+          {imgSrc ? (
+            <img
+              src={imgSrc}
+              alt={icon.name}
+              className="w-12 h-12 object-contain drop-shadow-lg"
+              style={{ imageRendering: 'auto' }}
+            />
+          ) : (
+            // Emoji or placeholder while loading
+            <span className="text-2xl leading-none select-none">{icon.icon}</span>
+          )}
         </div>
       </button>
 
-      <span className="absolute top-full mt-2 px-2 py-1 bg-black/80 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+      {/* Name label — always visible, truncated */}
+      <span
+        className="text-white text-[10px] font-medium leading-tight max-w-[56px] text-center truncate drop-shadow"
+        style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}
+        title={icon.name}
+      >
         {icon.name}
       </span>
     </div>
