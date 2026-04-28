@@ -22,25 +22,20 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
   const ext = icon.path.split('.').pop()?.toLowerCase();
 
   React.useEffect(() => {
-    // Already have a resolved image — use it directly
-    if (icon.icon.startsWith('data:image')) {
-      setImgSrc(icon.icon);
-      return;
-    }
-    // The file itself is a viewable image
-    if (ext && IMAGE_EXTS.includes(ext)) {
-      setImgSrc(convertFileSrc(icon.path));
-      return;
-    }
-    // Emoji placeholder or unresolved — fetch the real Windows icon once
+    // Always re-fetch from the Rust backend so we get the best quality icon.
+    // We do NOT rely on the base64 stored in localStorage (icon.icon) because
+    // it may have been saved from an older, lower-quality extraction.
     if (!fetching.current) {
       fetching.current = true;
       invoke<string>('get_file_icon', { path: icon.path })
         .then(b64 => setImgSrc(b64))
-        .catch(() => setImgSrc(null))
+        .catch(() => {
+          // Fallback: use whatever is stored if fetch fails
+          if (icon.icon.startsWith('data:image')) setImgSrc(icon.icon);
+        })
         .finally(() => { fetching.current = false; });
     }
-  }, [icon.icon, icon.path, ext]);
+  }, [icon.path]);
 
   const handleOpen = async () => {
     try { await invoke('open_path', { path: icon.path }); }

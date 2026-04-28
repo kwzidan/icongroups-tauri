@@ -4,72 +4,116 @@ use tauri::{
     Manager, Runtime,
 };
 use tauri_plugin_autostart::ManagerExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{OnceLock, Mutex};
 
-// ── Icon cache ────────────────────────────────────────────────────────────────
+// ── Caches ────────────────────────────────────────────────────────────────────
 fn icon_cache() -> &'static Mutex<HashMap<String, String>> {
     static C: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-// ── Our window HWNDs (for the WinEvent hook) ─────────────────────────────────
-#[cfg(target_os = "windows")]
-fn our_hwnds() -> &'static Mutex<HashSet<isize>> {
-    static H: OnceLock<Mutex<HashSet<isize>>> = OnceLock::new();
-    H.get_or_init(|| Mutex::new(HashSet::new()))
+// Store original WndProc per HWND so we can chain calls
+fn old_procs() -> &'static Mutex<HashMap<isize, isize>> {
+    static P: OnceLock<Mutex<HashMap<isize, isize>>> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-// ── WinEvent callback ──────────────────────────────────────────────────────────
+// ── Window subclass — blocks SC_MINIMIZE and SIZE_MINIMIZED ──────────────────
 #[cfg(target_os = "windows")]
-unsafe extern "system" fn on_minimize_start(
-    _hook: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
-    event: u32,
-    hwnd:  windows_sys::Win32::Foundation::HWND,
-    _id_object: i32, _id_child: i32, _thread: u32, _time: u32,
-) {
-    // EVENT_SYSTEM_MINIMIZESTART is a WinEvent constant in WindowsAndMessaging
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
-    const EVENT_MINIMIZE: u32 = 0x0016; // EVENT_SYSTEM_MINIMIZESTART
-    if event == EVENT_MINIMIZE {
-        let is_ours = our_hwnds()
-            .lock()
-            .map(|s| s.contains(&(hwnd as isize)))
-            .unwrap_or(false);
-        if is_ours {
-            ShowWindow(hwnd, SW_RESTORE);
+unsafe extern "system" fn widget_wnd_proc(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    msg:  u32,
+    wp:   usize,
+    lp:   isize,
+) -> isize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+
+    // Block minimize command (Win+D, taskbar click, etc.)
+    if msg == WM_SYSCOMMAND && (wp & 0xFFF0) == SC_MINIMIZE as usize {
+        return 0;
+    }
+    // If we somehow get minimised, restore immediately
+    if msg == WM_SIZE && wp == SIZE_MINIMIZED as usize {
+        ShowWindow(hwnd, SW_RESTORE);
+        return 0;
+    }
+
+    // Chain to original proc
+    let old = old_procs()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&(hwnd as isize)).copied())
+        .unwrap_or(0);
+
+    if old != 0 {
+        CallWindowProcW(
+            Some(std::mem::transmute::<isize, unsafe extern "system" fn(isize, u32, usize, isize) -> isize>(old)),
+            hwnd, msg, wp, lp,
+        )
+    } else {
+        DefWindowProcW(hwnd, msg, wp, lp)
+    }
+}
+
+// ── Apply desktop-widget window style ────────────────────────────────────────
+#[cfg(target_os = "windows")]
+fn apply_desktop_widget_style<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+
+    if let Ok(hwnd_raw) = window.hwnd() {
+        let hwnd = hwnd_raw.0 as windows_sys::Win32::Foundation::HWND;
+        unsafe {
+            // ① Style: TOOLWINDOW (excluded from Win+D) + NOACTIVATE, remove APPWINDOW
+            let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            let new_ex = (ex | WS_EX_TOOLWINDOW as i32 | WS_EX_NOACTIVATE as i32)
+                & !(WS_EX_APPWINDOW as i32);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex);
+            SetWindowPos(
+                hwnd, HWND_BOTTOM, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+
+            // ② Subclass WndProc so SC_MINIMIZE is blocked at message level
+            let already = old_procs()
+                .lock()
+                .ok()
+                .map(|m| m.contains_key(&(hwnd as isize)))
+                .unwrap_or(false);
+            if !already {
+                let old = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, widget_wnd_proc as isize);
+                if let Ok(mut procs) = old_procs().lock() {
+                    procs.insert(hwnd as isize, old);
+                }
+            }
         }
     }
 }
 
-// ── Install process-wide WinEvent hook ─────────────────────────────────────────
-#[cfg(target_os = "windows")]
-fn start_win_event_hook() {
-    std::thread::spawn(|| unsafe {
-        // SetWinEventHook / HWINEVENTHOOK live in Accessibility
-        use windows_sys::Win32::UI::Accessibility::{
-            SetWinEventHook, HWINEVENTHOOK,
-        };
-        // Message loop functions in WindowsAndMessaging
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetMessageW, TranslateMessage, DispatchMessageW, MSG,
-        };
-        const WINEVENT_OUTOFCONTEXT:  u32 = 0x0000;
-        const EVENT_SYSTEM_MINIMIZE:  u32 = 0x0016; // EVENT_SYSTEM_MINIMIZESTART
-
-        let _h: HWINEVENTHOOK = SetWinEventHook(
-            EVENT_SYSTEM_MINIMIZE,
-            EVENT_SYSTEM_MINIMIZE,
-            std::ptr::null_mut(),
-            Some(on_minimize_start),
-            0, 0,
-            WINEVENT_OUTOFCONTEXT,
-        );
-
-        let mut msg: MSG = std::mem::zeroed();
-        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) != 0 {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+// ── Polling fallback ──────────────────────────────────────────────────────────
+fn start_anti_minimize_guard(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        for (_, win) in app.webview_windows() {
+            let minimized = win.is_minimized().unwrap_or(false);
+            let visible   = win.is_visible().unwrap_or(true);
+            if minimized || !visible {
+                #[cfg(target_os = "windows")]
+                if let Ok(h) = win.hwnd() {
+                    let hwnd = h.0 as windows_sys::Win32::Foundation::HWND;
+                    unsafe {
+                        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+                            hwnd,
+                            windows_sys::Win32::UI::WindowsAndMessaging::SW_RESTORE,
+                        );
+                    }
+                }
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_always_on_bottom(true);
+                #[cfg(target_os = "windows")]
+                apply_desktop_widget_style(&win);
+            }
         }
     });
 }
@@ -80,10 +124,7 @@ fn open_path(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
-        Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
         Ok(())
     }
     #[cfg(not(target_os = "windows"))]
@@ -94,6 +135,7 @@ fn open_path(path: String) -> Result<(), String> {
 async fn get_file_icon(path: String) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
+        // Check Rust-side cache first (fast path, no PowerShell spawn)
         if let Ok(cache) = icon_cache().lock() {
             if let Some(hit) = cache.get(&path) {
                 return Ok(hit.clone());
@@ -105,50 +147,56 @@ async fn get_file_icon(path: String) -> Result<String, String> {
 
         let safe = path.replace('\'', "''");
 
-        // Use SHGetImageList(SHIL_JUMBO=4) to get the same 256×256 icon that
-        // Windows shows on the desktop.  Falls back to ExtractAssociatedIcon.
+        // Try SHGetImageList(SHIL_JUMBO=4) for 256×256 first.
+        // Falls back to new Icon(path, 256, 256) for direct .ico loading,
+        // then to ExtractAssociatedIcon for .exe/.lnk.
         let script = format!(r#"$p='{safe}';
 Add-Type -AssemblyName System.Drawing;
 Add-Type @'
 using System;using System.Drawing;using System.Runtime.InteropServices;
-public class NI {{
+public class WI{{
   [DllImport("shell32.dll",CharSet=CharSet.Auto)]
-  public static extern IntPtr SHGetFileInfo(string p,uint a,ref SHFI fi,uint sz,uint fl);
+  public static extern IntPtr SHGetFileInfo(string p,uint a,ref SHI fi,uint sz,uint fl);
   [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Auto)]
-  public struct SHFI{{public IntPtr hIcon;public int iIcon;public uint Attr;
+  public struct SHI{{public IntPtr hIcon;public int iIcon;public uint Attr;
     [MarshalAs(UnmanagedType.ByValTStr,SizeConst=260)]public string Name;
     [MarshalAs(UnmanagedType.ByValTStr,SizeConst=80)]public string Type;}}
   [DllImport("shell32.dll")]
-  public static extern int SHGetImageList(int il,ref Guid riid,out IntPtr ppv);
+  public static extern int SHGetImageList(int il,ref Guid g,out IntPtr ppv);
   [DllImport("comctl32.dll")]
-  public static extern IntPtr ImageList_GetIcon(IntPtr hIml,int i,int fl);
-  [DllImport("user32.dll")]
-  public static extern bool DestroyIcon(IntPtr h);
+  public static extern IntPtr ImageList_GetIcon(IntPtr hIml,int i,uint fl);
+  [DllImport("user32.dll")]public static extern bool DestroyIcon(IntPtr h);
 }}
 '@
-try {{
-  $fi=New-Object NI+SHFI;
-  NI::SHGetFileInfo($p,0,[ref]$fi,[Runtime.InteropServices.Marshal]::SizeOf($fi),0x4000)|Out-Null;
-  $idx=$fi.iIcon;
-  $riid=[Guid]"46EB5926-582E-4017-9FDF-E8998DAA0950";
-  $ppv=[IntPtr]::Zero;
-  [NI]::SHGetImageList(4,[ref]$riid,[ref]$ppv)|Out-Null;
-  $h=[NI]::ImageList_GetIcon($ppv,$idx,1);
-  if($h -eq [IntPtr]::Zero){{throw "no jumbo"}};
-  $ico=[System.Drawing.Icon]::FromHandle($h);
-  $bmp=$ico.ToBitmap();
-  $ms=New-Object System.IO.MemoryStream;
-  $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);
-  $r=[Convert]::ToBase64String($ms.ToArray());
-  [NI]::DestroyIcon($h);
-  $r
-}} catch {{
-  $src=[System.Drawing.Icon]::ExtractAssociatedIcon($p);
-  $bmp=$src.ToBitmap();
+function Get-Base64([System.Drawing.Bitmap]$bmp){{
   $ms=New-Object System.IO.MemoryStream;
   $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);
   [Convert]::ToBase64String($ms.ToArray())
-}}"#);
+}}
+$result=''
+try{{
+  $fi=New-Object WI+SHI;
+  [WI]::SHGetFileInfo($p,0,[ref]$fi,[Runtime.InteropServices.Marshal]::SizeOf($fi),0x4100)|Out-Null;
+  $idx=$fi.iIcon;
+  $riid=[Guid]'46EB5926-582E-4017-9FDF-E8998DAA0950';
+  $ppv=[IntPtr]::Zero;
+  [WI]::SHGetImageList(4,[ref]$riid,[ref]$ppv)|Out-Null;
+  if($ppv -ne [IntPtr]::Zero){{
+    $h=[WI]::ImageList_GetIcon($ppv,$idx,1);
+    if($h -ne [IntPtr]::Zero){{
+      $ico=[System.Drawing.Icon]::FromHandle($h);
+      $result=Get-Base64($ico.ToBitmap());
+      [WI]::DestroyIcon($h);
+    }}
+  }}
+}}catch{{}}
+if($result -eq ''){{
+  try{{
+    $src=[System.Drawing.Icon]::ExtractAssociatedIcon($p);
+    $result=Get-Base64($src.ToBitmap())
+  }}catch{{}}
+}}
+$result"#);
 
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
@@ -180,7 +228,7 @@ fn create_group_window<R: Runtime>(app: tauri::AppHandle<R>, layout: String) {
         tauri::WebviewUrl::App(format!("index.html?layout={}", layout).into()),
     )
     .title("IconGroup- Kareem")
-    .inner_size(400.0, 400.0)
+    .inner_size(260.0, 200.0)   // Small initial size — no giant invisible frame
     .transparent(true)
     .decorations(false)
     .shadow(false)
@@ -193,69 +241,13 @@ fn create_group_window<R: Runtime>(app: tauri::AppHandle<R>, layout: String) {
     #[cfg(target_os = "windows")]
     {
         apply_desktop_widget_style(&win);
-        // Register HWND for the WinEvent hook
-        if let Ok(hwnd) = win.hwnd() {
-            if let Ok(mut set) = our_hwnds().lock() {
-                set.insert(hwnd.0 as isize);
-            }
-        }
-        // Re-apply after 600 ms to override any WebView2 style reset
+        // Re-apply after WebView2 finishes initialising (may reset styles)
         let win2 = win.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(600));
+            std::thread::sleep(std::time::Duration::from_millis(800));
             apply_desktop_widget_style(&win2);
         });
     }
-}
-
-// ── Desktop widget style ──────────────────────────────────────────────────────
-#[cfg(target_os = "windows")]
-fn apply_desktop_widget_style<R: Runtime>(window: &tauri::WebviewWindow<R>) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::*;
-    if let Ok(hwnd) = window.hwnd() {
-        let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
-        unsafe {
-            let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
-            // Add TOOLWINDOW + NOACTIVATE, remove APPWINDOW
-            // TOOLWINDOW → excluded from Win+D "show desktop" sweep
-            // removing APPWINDOW → not treated as a normal app window
-            let new_ex = (ex | WS_EX_TOOLWINDOW as i32 | WS_EX_NOACTIVATE as i32)
-                & !(WS_EX_APPWINDOW as i32);
-            SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex);
-            SetWindowPos(
-                hwnd, HWND_BOTTOM, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-            );
-        }
-    }
-}
-
-// ── Polling fallback (catches any slip-through minimization) ──────────────────
-fn start_anti_minimize_guard(app: tauri::AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        for (_, win) in app.webview_windows() {
-            let minimized = win.is_minimized().unwrap_or(false);
-            let visible   = win.is_visible().unwrap_or(true);
-            if minimized || !visible {
-                #[cfg(target_os = "windows")]
-                if let Ok(hwnd) = win.hwnd() {
-                    let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
-                    unsafe {
-                        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
-                            hwnd,
-                            windows_sys::Win32::UI::WindowsAndMessaging::SW_RESTORE,
-                        );
-                    }
-                }
-                let _ = win.unminimize();
-                let _ = win.show();
-                let _ = win.set_always_on_bottom(true);
-                #[cfg(target_os = "windows")]
-                apply_desktop_widget_style(&win);
-            }
-        }
-    });
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -272,23 +264,12 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             if let Some(win) = app.get_webview_window("main") {
                 apply_desktop_widget_style(&win);
-                // Register main window HWND
-                if let Ok(hwnd) = win.hwnd() {
-                    if let Ok(mut set) = our_hwnds().lock() {
-                        set.insert(hwnd.0 as isize);
-                    }
-                }
-                // Re-apply after WebView2 finishes initialising
                 let win2 = win.clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    std::thread::sleep(std::time::Duration::from_millis(800));
                     apply_desktop_widget_style(&win2);
                 });
             }
-
-            // Install the WinEvent hook (intercepts minimize before it happens)
-            #[cfg(target_os = "windows")]
-            start_win_event_hook();
 
             let autostart_manager    = app.autolaunch();
             let is_autostart_enabled = autostart_manager.is_enabled().unwrap_or(false);
