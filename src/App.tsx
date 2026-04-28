@@ -130,10 +130,15 @@ export default function App() {
   const onGroupRightClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const menuW = 196, menuH = 280;
+    const menuW = 196, menuH = 300;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // Flip left if too close to right edge, flip up if too close to bottom edge
+    const x = e.clientX + menuW + 8 > vw ? e.clientX - menuW - 4 : e.clientX + 4;
+    const y = e.clientY + menuH + 8 > vh ? e.clientY - menuH - 4 : e.clientY + 4;
     setCtx({
-      x: Math.min(e.clientX, window.innerWidth  - menuW - 8),
-      y: Math.min(e.clientY, window.innerHeight - menuH - 8),
+      x: Math.max(4, x),
+      y: Math.max(4, y),
     });
     setShowColors(false);
   }, []);

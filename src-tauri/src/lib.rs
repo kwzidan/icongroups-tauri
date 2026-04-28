@@ -46,20 +46,24 @@ async fn get_file_icon(path: String) -> Result<String, String> {
         // Use single-quoted PS string; escape embedded single-quotes by doubling them
         let safe = path.replace('\'', "''");
 
-        // Extract a 48×48 icon for crisp display at the sizes we use in the UI
+        // Extract a crisp 256×256 icon via ExtractAssociatedIcon.
+        // Windows stores .exe/.lnk icons at up to 256px natively; drawing into
+        // a 256px bitmap and saving as PNG gives pixel-perfect results.
         let script = format!(
             r#"$p='{safe}';
 Add-Type -AssemblyName System.Drawing;
 try {{
   $src = [System.Drawing.Icon]::ExtractAssociatedIcon($p);
-  $bmp = New-Object System.Drawing.Bitmap(48,48);
+  $bmp = New-Object System.Drawing.Bitmap(256,256);
   $g   = [System.Drawing.Graphics]::FromImage($bmp);
-  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic;
-  $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality;
-  $g.DrawImage($src.ToBitmap(), 0, 0, 48, 48);
+  $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality;
+  $g.InterpolationMode  = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic;
+  $g.SmoothingMode      = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias;
+  $g.PixelOffsetMode    = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality;
+  $g.DrawImage($src.ToBitmap(), 0, 0, 256, 256);
   $g.Dispose();
   $ms = New-Object System.IO.MemoryStream;
-  $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png);
+  $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);
   [Convert]::ToBase64String($ms.ToArray())
 }} catch {{ '' }}"#
         );
@@ -143,14 +147,17 @@ fn apply_desktop_widget_style<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     }
 }
 
-/// Belt-and-suspenders fallback: poll every 50 ms and restore any window that
-/// somehow got minimized (e.g. older drivers that ignore WS_EX_TOOLWINDOW).
+/// Belt-and-suspenders fallback: poll every 30 ms and restore any window that
+/// somehow got minimized or hidden (e.g. Win+D on some Windows builds).
 fn start_anti_minimize_guard(app: tauri::AppHandle) {
     std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(30));
         for (_, win) in app.webview_windows() {
-            if win.is_minimized().unwrap_or(false) {
+            let minimized = win.is_minimized().unwrap_or(false);
+            let visible   = win.is_visible().unwrap_or(true);
+            if minimized || !visible {
                 let _ = win.unminimize();
+                let _ = win.show();
                 let _ = win.set_always_on_bottom(true);
                 #[cfg(target_os = "windows")]
                 apply_desktop_widget_style(&win);
