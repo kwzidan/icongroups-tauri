@@ -46,23 +46,16 @@ async fn get_file_icon(path: String) -> Result<String, String> {
         // Use single-quoted PS string; escape embedded single-quotes by doubling them
         let safe = path.replace('\'', "''");
 
-        // Extract a crisp 256×256 icon via ExtractAssociatedIcon.
-        // Windows stores .exe/.lnk icons at up to 256px natively; drawing into
-        // a 256px bitmap and saving as PNG gives pixel-perfect results.
+        // Extract the icon at its NATIVE resolution (32×32 for most system
+        // icons; modern apps ship 48 or 256). We save it as-is — no upscaling —
+        // so the browser renders it crisp at the 40 px display size.
         let script = format!(
             r#"$p='{safe}';
 Add-Type -AssemblyName System.Drawing;
 try {{
   $src = [System.Drawing.Icon]::ExtractAssociatedIcon($p);
-  $bmp = New-Object System.Drawing.Bitmap(256,256);
-  $g   = [System.Drawing.Graphics]::FromImage($bmp);
-  $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality;
-  $g.InterpolationMode  = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic;
-  $g.SmoothingMode      = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias;
-  $g.PixelOffsetMode    = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality;
-  $g.DrawImage($src.ToBitmap(), 0, 0, 256, 256);
-  $g.Dispose();
-  $ms = New-Object System.IO.MemoryStream;
+  $bmp = $src.ToBitmap();
+  $ms  = New-Object System.IO.MemoryStream;
   $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);
   [Convert]::ToBase64String($ms.ToArray())
 }} catch {{ '' }}"#
@@ -126,36 +119,47 @@ fn apply_desktop_widget_style<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
     if let Ok(hwnd) = window.hwnd() {
-        // tauri::WebviewWindow::hwnd() returns windows::Win32::Foundation::HWND
-        // whose .0 field (isize) is identical in representation to windows_sys HWND (isize).
         let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
         unsafe {
             let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
-            SetWindowLongW(
-                hwnd,
-                GWL_EXSTYLE,
-                ex | WS_EX_TOOLWINDOW as i32 | WS_EX_NOACTIVATE as i32,
-            );
-            // Keep pinned at the bottom of the Z-order without activating
+            // ADD: WS_EX_TOOLWINDOW (skips Win+D show-desktop) + WS_EX_NOACTIVATE
+            // REMOVE: WS_EX_APPWINDOW — this flag makes Windows include the window
+            //         in the "Show Desktop" (Win+D) minimise sweep.
+            let new_ex = (ex | WS_EX_TOOLWINDOW as i32 | WS_EX_NOACTIVATE as i32)
+                & !(WS_EX_APPWINDOW as i32);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex);
+            // Pin to bottom of Z-order without activating
             SetWindowPos(
                 hwnd,
                 HWND_BOTTOM,
                 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
         }
     }
 }
 
-/// Belt-and-suspenders fallback: poll every 30 ms and restore any window that
-/// somehow got minimized or hidden (e.g. Win+D on some Windows builds).
+/// Belt-and-suspenders: poll every 25 ms and immediately restore any window
+/// that was minimized or hidden (e.g. Win+D / Win+M on some Windows builds).
+/// Uses ShowWindow(SW_RESTORE) directly via WinAPI for the fastest response.
 fn start_anti_minimize_guard(app: tauri::AppHandle) {
     std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::thread::sleep(std::time::Duration::from_millis(25));
         for (_, win) in app.webview_windows() {
             let minimized = win.is_minimized().unwrap_or(false);
             let visible   = win.is_visible().unwrap_or(true);
             if minimized || !visible {
+                // Direct WinAPI restore — faster than Tauri's async path
+                #[cfg(target_os = "windows")]
+                if let Ok(hwnd) = win.hwnd() {
+                    let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
+                    unsafe {
+                        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+                            hwnd,
+                            windows_sys::Win32::UI::WindowsAndMessaging::SW_RESTORE,
+                        );
+                    }
+                }
                 let _ = win.unminimize();
                 let _ = win.show();
                 let _ = win.set_always_on_bottom(true);
