@@ -76,19 +76,18 @@ const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
         className="active:scale-90 transition-transform focus:outline-none"
       >
         <div
-          className={`w-10 h-10 flex items-center justify-center overflow-hidden rounded-lg ${
-            isEmoji ? `text-xl ${icon.color}` : ''
+          className={`w-12 h-12 flex items-center justify-center overflow-hidden rounded-xl ${
+            isEmoji ? `text-2xl ${icon.color}` : ''
           }`}
         >
           {imgSrc ? (
             <img
               src={imgSrc}
               alt={icon.name}
-              className="w-10 h-10 object-contain"
-              style={{ imageRendering: 'crisp-edges' } as React.CSSProperties}
+              className="w-12 h-12 object-contain"
             />
           ) : (
-            <span className="text-xl leading-none select-none">{icon.icon}</span>
+            <span className="text-2xl leading-none select-none">{icon.icon}</span>
           )}
         </div>
       </button>
