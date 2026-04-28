@@ -20,7 +20,7 @@ fn our_hwnds() -> &'static Mutex<HashSet<isize>> {
     H.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-// ── WinEvent callback — fires the moment Windows tries to minimise one of our windows ──
+// ── WinEvent callback ──────────────────────────────────────────────────────────
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn on_minimize_start(
     _hook: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
@@ -28,9 +28,10 @@ unsafe extern "system" fn on_minimize_start(
     hwnd:  windows_sys::Win32::Foundation::HWND,
     _id_object: i32, _id_child: i32, _thread: u32, _time: u32,
 ) {
-    use windows_sys::Win32::UI::Accessibility::EVENT_SYSTEM_MINIMIZESTART;
+    // EVENT_SYSTEM_MINIMIZESTART is a WinEvent constant in WindowsAndMessaging
     use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
-    if event == EVENT_SYSTEM_MINIMIZESTART {
+    const EVENT_MINIMIZE: u32 = 0x0016; // EVENT_SYSTEM_MINIMIZESTART
+    if event == EVENT_MINIMIZE {
         let is_ours = our_hwnds()
             .lock()
             .map(|s| s.contains(&(hwnd as isize)))
@@ -41,27 +42,30 @@ unsafe extern "system" fn on_minimize_start(
     }
 }
 
-// ── Install process-wide WinEvent hook on a dedicated message-loop thread ────
+// ── Install process-wide WinEvent hook ─────────────────────────────────────────
 #[cfg(target_os = "windows")]
 fn start_win_event_hook() {
     std::thread::spawn(|| unsafe {
+        // SetWinEventHook / HWINEVENTHOOK live in Accessibility
         use windows_sys::Win32::UI::Accessibility::{
-            SetWinEventHook, WINEVENT_OUTOFCONTEXT, EVENT_SYSTEM_MINIMIZESTART,
+            SetWinEventHook, HWINEVENTHOOK,
         };
+        // Message loop functions in WindowsAndMessaging
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             GetMessageW, TranslateMessage, DispatchMessageW, MSG,
         };
+        const WINEVENT_OUTOFCONTEXT:  u32 = 0x0000;
+        const EVENT_SYSTEM_MINIMIZE:  u32 = 0x0016; // EVENT_SYSTEM_MINIMIZESTART
 
-        let _hook = SetWinEventHook(
-            EVENT_SYSTEM_MINIMIZESTART,
-            EVENT_SYSTEM_MINIMIZESTART,
+        let _h: HWINEVENTHOOK = SetWinEventHook(
+            EVENT_SYSTEM_MINIMIZE,
+            EVENT_SYSTEM_MINIMIZE,
             std::ptr::null_mut(),
             Some(on_minimize_start),
             0, 0,
             WINEVENT_OUTOFCONTEXT,
         );
 
-        // Message loop required for WINEVENT_OUTOFCONTEXT callbacks to fire
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) != 0 {
             TranslateMessage(&msg);
