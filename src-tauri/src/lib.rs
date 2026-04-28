@@ -28,8 +28,9 @@ unsafe extern "system" fn on_minimize_start(
     hwnd:  windows_sys::Win32::Foundation::HWND,
     _id_object: i32, _id_child: i32, _thread: u32, _time: u32,
 ) {
-    use windows_sys::Win32::UI::Accessibility::EVENT_SYSTEM_MINIMIZESTART;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EVENT_SYSTEM_MINIMIZESTART, ShowWindow, SW_RESTORE,
+    };
     if event == EVENT_SYSTEM_MINIMIZESTART {
         let is_ours = our_hwnds()
             .lock()
@@ -45,10 +46,8 @@ unsafe extern "system" fn on_minimize_start(
 #[cfg(target_os = "windows")]
 fn start_win_event_hook() {
     std::thread::spawn(|| unsafe {
-        use windows_sys::Win32::UI::Accessibility::{
-            SetWinEventHook, WINEVENT_OUTOFCONTEXT, EVENT_SYSTEM_MINIMIZESTART,
-        };
         use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SetWinEventHook, WINEVENT_OUTOFCONTEXT, EVENT_SYSTEM_MINIMIZESTART,
             GetMessageW, TranslateMessage, DispatchMessageW, MSG,
         };
 
@@ -63,7 +62,7 @@ fn start_win_event_hook() {
 
         // Message loop required for WINEVENT_OUTOFCONTEXT callbacks to fire
         let mut msg: MSG = std::mem::zeroed();
-        while GetMessageW(&mut msg, 0, 0, 0) != 0 {
+        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) != 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
