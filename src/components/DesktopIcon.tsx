@@ -1,5 +1,5 @@
 import React from 'react';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 
 interface DesktopIconProps {
   icon: {
@@ -13,13 +13,10 @@ interface DesktopIconProps {
   onRemove?: () => void;
 }
 
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp'];
 
 const DesktopIcon: React.FC<DesktopIconProps> = ({ icon, onRemove }) => {
   const [imgSrc, setImgSrc] = React.useState<string | null>(null);
   const fetching = React.useRef(false);
-
-  const ext = icon.path.split('.').pop()?.toLowerCase();
 
   React.useEffect(() => {
     // Always re-fetch from the Rust backend so we get the best quality icon.
