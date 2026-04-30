@@ -48,7 +48,7 @@ unsafe extern "system" fn widget_wnd_proc(
 
     if old != 0 {
         CallWindowProcW(
-            Some(std::mem::transmute::<isize, unsafe extern "system" fn(isize, u32, usize, isize) -> isize>(old)),
+            Some(std::mem::transmute::<isize, unsafe extern "system" fn(*mut std::ffi::c_void, u32, usize, isize) -> isize>(old)),
             hwnd, msg, wp, lp,
         )
     } else {
